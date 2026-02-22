@@ -28,6 +28,13 @@ const axios = require('axios');
 const LARK_NOTIFY_INTERVAL = 10 * 60 * 1000;
 let larkNotifyTimer = null;
 
+function formatLarkError(err) {
+    if (err && err.response) {
+        return `${err.message} (status=${err.response.status}, body=${JSON.stringify(err.response.data)})`;
+    }
+    return err && err.message ? err.message : String(err);
+}
+
 async function sendLarkRoleStatus() {
     if (!CONFIG.larkWebhook) return;
     const state = getUserState();
@@ -41,9 +48,9 @@ async function sendLarkRoleStatus() {
 
 function startLarkNotifyLoop() {
     if (!CONFIG.larkWebhook) return;
-    sendLarkRoleStatus().catch((err) => logWarn('飞书', `首次推送失败: ${err.message}`));
+    sendLarkRoleStatus().catch((err) => logWarn('飞书', `首次推送失败: ${formatLarkError(err)}`));
     larkNotifyTimer = setInterval(() => {
-        sendLarkRoleStatus().catch((err) => logWarn('飞书', `推送失败: ${err.message}`));
+        sendLarkRoleStatus().catch((err) => logWarn('飞书', `推送失败: ${formatLarkError(err)}`));
     }, LARK_NOTIFY_INTERVAL);
 }
 
