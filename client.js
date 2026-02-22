@@ -30,7 +30,9 @@ let larkNotifyTimer = null;
 
 function formatLarkError(err) {
     if (err && err.response) {
-        return `${err.message} (status=${err.response.status}, body=${JSON.stringify(err.response.data)})`;
+        const body = JSON.stringify(err.response.data);
+        const bodySafe = body.length > 300 ? `${body.slice(0, 300)}...` : body;
+        return `${err.message} (status=${err.response.status}, body=${bodySafe})`;
     }
     return err && err.message ? err.message : String(err);
 }
@@ -38,19 +40,27 @@ function formatLarkError(err) {
 async function sendLarkRoleStatus() {
     if (!CONFIG.larkWebhook) return;
     const state = getUserState();
-    await axios.post(CONFIG.larkWebhook, {
-        msg_type: 'text',
-        content: {
-            text: `[农场状态] 角色:${state.name || '未知'} 等级:Lv${state.level || 0} 经验:${state.exp || 0}`
-        }
-    }, { timeout: 10000 });
+    try {
+        await axios.post(CONFIG.larkWebhook, {
+            msg_type: 'text',
+            content: {
+                text: `[农场状态] 角色:${state.name || '未知'} 等级:Lv${state.level || 0} 经验:${state.exp || 0}`
+            }
+        }, { timeout: 10000 });
+    } catch (err) {
+        throw new Error(`飞书推送请求失败: ${formatLarkError(err)}`);
+    }
+}
+
+function runLarkNotify(errorPrefix) {
+    sendLarkRoleStatus().catch((err) => logWarn('飞书', `${errorPrefix}: ${err.message}`));
 }
 
 function startLarkNotifyLoop() {
     if (!CONFIG.larkWebhook) return;
-    sendLarkRoleStatus().catch((err) => logWarn('飞书', `首次推送失败: ${formatLarkError(err)}`));
+    runLarkNotify('首次推送失败');
     larkNotifyTimer = setInterval(() => {
-        sendLarkRoleStatus().catch((err) => logWarn('飞书', `推送失败: ${formatLarkError(err)}`));
+        runLarkNotify('推送失败');
     }, LARK_NOTIFY_INTERVAL);
 }
 
