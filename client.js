@@ -13,7 +13,7 @@
 
 const { CONFIG } = require('./src/config');
 const { loadProto } = require('./src/proto');
-const { connect, cleanup, getWs } = require('./src/network');
+const { connect, cleanup, getWs, getUserState } = require('./src/network');
 const { startFarmCheckLoop, stopFarmCheckLoop } = require('./src/farm');
 const { startFriendCheckLoop, stopFriendCheckLoop } = require('./src/friend');
 const { initTaskSystem, cleanupTaskSystem } = require('./src/task');
@@ -23,6 +23,35 @@ const { processInviteCodes } = require('./src/invite');
 const { verifyMode, decodeMode } = require('./src/decode');
 const { emitRuntimeHint, sleep } = require('./src/utils');
 const { getQQFarmCodeByScan } = require('./src/qqQrLogin');
+const axios = require('axios');
+
+const LARK_NOTIFY_INTERVAL = 10 * 60 * 1000;
+let larkNotifyTimer = null;
+
+async function sendLarkRoleStatus() {
+    if (!CONFIG.larkWebhook) return;
+    const state = getUserState();
+    await axios.post(CONFIG.larkWebhook, {
+        msg_type: 'text',
+        content: {
+            text: `[农场状态] 角色:${state.name || '未知'} 等级:Lv${state.level || 0} 经验:${state.exp || 0}`
+        }
+    }, { timeout: 10000 });
+}
+
+function startLarkNotifyLoop() {
+    if (!CONFIG.larkWebhook) return;
+    sendLarkRoleStatus().catch(() => { });
+    larkNotifyTimer = setInterval(() => {
+        sendLarkRoleStatus().catch(() => { });
+    }, LARK_NOTIFY_INTERVAL);
+}
+
+function stopLarkNotifyLoop() {
+    if (!larkNotifyTimer) return;
+    clearInterval(larkNotifyTimer);
+    larkNotifyTimer = null;
+}
 
 // ============ 帮助信息 ============
 function showHelp() {
@@ -163,6 +192,7 @@ async function main() {
         // 启动时立即检查一次背包
         setTimeout(() => debugSellFruits(), 5000);
         startSellLoop(60000);  // 每分钟自动出售仓库果实
+        startLarkNotifyLoop();
     });
 
     // 退出处理
@@ -173,6 +203,7 @@ async function main() {
         stopFriendCheckLoop();
         cleanupTaskSystem();
         stopSellLoop();
+        stopLarkNotifyLoop();
         cleanup();
         const ws = getWs();
         if (ws) ws.close();
