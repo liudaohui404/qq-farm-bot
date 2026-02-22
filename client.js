@@ -21,7 +21,7 @@ const { initStatusBar, cleanupStatusBar, setStatusPlatform } = require('./src/st
 const { startSellLoop, stopSellLoop, debugSellFruits } = require('./src/warehouse');
 const { processInviteCodes } = require('./src/invite');
 const { verifyMode, decodeMode } = require('./src/decode');
-const { emitRuntimeHint, sleep } = require('./src/utils');
+const { emitRuntimeHint, sleep, logWarn } = require('./src/utils');
 const { getQQFarmCodeByScan } = require('./src/qqQrLogin');
 const axios = require('axios');
 
@@ -41,9 +41,9 @@ async function sendLarkRoleStatus() {
 
 function startLarkNotifyLoop() {
     if (!CONFIG.larkWebhook) return;
-    sendLarkRoleStatus().catch(() => { });
+    sendLarkRoleStatus().catch((err) => logWarn('飞书', `首次推送失败: ${err.message}`));
     larkNotifyTimer = setInterval(() => {
-        sendLarkRoleStatus().catch(() => { });
+        sendLarkRoleStatus().catch((err) => logWarn('飞书', `推送失败: ${err.message}`));
     }, LARK_NOTIFY_INTERVAL);
 }
 
