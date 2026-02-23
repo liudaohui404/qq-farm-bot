@@ -11,68 +11,83 @@
  *   src/decode.js   - PB解码/验证工具模式
  */
 
-const { CONFIG } = require('./src/config');
-const { loadProto } = require('./src/proto');
-const { connect, cleanup, getWs, getUserState } = require('./src/network');
-const { startFarmCheckLoop, stopFarmCheckLoop } = require('./src/farm');
-const { startFriendCheckLoop, stopFriendCheckLoop } = require('./src/friend');
-const { initTaskSystem, cleanupTaskSystem } = require('./src/task');
-const { initStatusBar, cleanupStatusBar, setStatusPlatform } = require('./src/status');
-const { startSellLoop, stopSellLoop, debugSellFruits } = require('./src/warehouse');
-const { processInviteCodes } = require('./src/invite');
-const { verifyMode, decodeMode } = require('./src/decode');
-const { emitRuntimeHint, sleep, logWarn } = require('./src/utils');
-const { getQQFarmCodeByScan } = require('./src/qqQrLogin');
-const axios = require('axios');
+const { CONFIG } = require("./src/config");
+const { loadProto } = require("./src/proto");
+const { connect, cleanup, getWs, getUserState } = require("./src/network");
+const { startFarmCheckLoop, stopFarmCheckLoop } = require("./src/farm");
+const { startFriendCheckLoop, stopFriendCheckLoop } = require("./src/friend");
+const { initTaskSystem, cleanupTaskSystem } = require("./src/task");
+const {
+  initStatusBar,
+  cleanupStatusBar,
+  setStatusPlatform,
+} = require("./src/status");
+const {
+  startSellLoop,
+  stopSellLoop,
+  debugSellFruits,
+} = require("./src/warehouse");
+const { startCouponShopLoop, stopCouponShopLoop } = require("./src/couponShop");
+const { processInviteCodes } = require("./src/invite");
+const { verifyMode, decodeMode } = require("./src/decode");
+const { emitRuntimeHint, sleep, logWarn } = require("./src/utils");
+const { getQQFarmCodeByScan } = require("./src/qqQrLogin");
+const axios = require("axios");
 
 const LARK_NOTIFY_INTERVAL = 10 * 60 * 1000;
 let larkNotifyTimer = null;
 
 function formatLarkError(err) {
-    if (err && err.response) {
-        const body = JSON.stringify(err.response.data);
-        const bodySafe = body.length > 300 ? `${body.slice(0, 300)}...` : body;
-        return `${err.message} (status=${err.response.status}, body=${bodySafe})`;
-    }
-    return err && err.message ? err.message : String(err);
+  if (err && err.response) {
+    const body = JSON.stringify(err.response.data);
+    const bodySafe = body.length > 300 ? `${body.slice(0, 300)}...` : body;
+    return `${err.message} (status=${err.response.status}, body=${bodySafe})`;
+  }
+  return err && err.message ? err.message : String(err);
 }
 
 async function sendLarkRoleStatus() {
-    if (!CONFIG.larkWebhook) return;
-    const state = getUserState();
-    try {
-        await axios.post(CONFIG.larkWebhook, {
-            msg_type: 'text',
-            content: {
-                text: `[农场状态] 角色:${state.name || '未知'} 等级:Lv${state.level || 0} 经验:${state.exp || 0}`
-            }
-        }, { timeout: 10000 });
-    } catch (err) {
-        throw new Error(`飞书推送请求失败: ${formatLarkError(err)}`);
-    }
+  if (!CONFIG.larkWebhook) return;
+  const state = getUserState();
+  try {
+    await axios.post(
+      CONFIG.larkWebhook,
+      {
+        msg_type: "text",
+        content: {
+          text: `[农场状态] 角色:${state.name || "未知"} 等级:Lv${state.level || 0} 经验:${state.exp || 0}`,
+        },
+      },
+      { timeout: 10000 },
+    );
+  } catch (err) {
+    throw new Error(`飞书推送请求失败: ${formatLarkError(err)}`);
+  }
 }
 
 function runLarkNotify(errorPrefix) {
-    sendLarkRoleStatus().catch((err) => logWarn('飞书', `${errorPrefix}: ${err.message}`));
+  sendLarkRoleStatus().catch((err) =>
+    logWarn("飞书", `${errorPrefix}: ${err.message}`),
+  );
 }
 
 function startLarkNotifyLoop() {
-    if (!CONFIG.larkWebhook) return;
-    runLarkNotify('首次推送失败');
-    larkNotifyTimer = setInterval(() => {
-        runLarkNotify('推送失败');
-    }, LARK_NOTIFY_INTERVAL);
+  if (!CONFIG.larkWebhook) return;
+  runLarkNotify("首次推送失败");
+  larkNotifyTimer = setInterval(() => {
+    runLarkNotify("推送失败");
+  }, LARK_NOTIFY_INTERVAL);
 }
 
 function stopLarkNotifyLoop() {
-    if (!larkNotifyTimer) return;
-    clearInterval(larkNotifyTimer);
-    larkNotifyTimer = null;
+  if (!larkNotifyTimer) return;
+  clearInterval(larkNotifyTimer);
+  larkNotifyTimer = null;
 }
 
 // ============ 帮助信息 ============
 function showHelp() {
-    console.log(`
+  console.log(`
 QQ经典农场 挂机脚本
 ====================
 
@@ -98,6 +113,7 @@ QQ经典农场 挂机脚本
   - 自动巡查好友农场: 帮忙浇水/除草/除虫 + 偷菜
   - 自动领取任务奖励 (支持分享翻倍)
   - 每分钟自动出售仓库果实
+    - 自动使用点券购买有机化肥容器(1012)
   - 启动时读取 share.txt 处理邀请码 (仅微信)
   - 心跳保活
 
@@ -109,126 +125,134 @@ QQ经典农场 挂机脚本
 
 // ============ 参数解析 ============
 function parseArgs(args) {
-    const options = {
-        code: '',
-        qrLogin: false,
-        deleteAccountMode: false,
-        name: '',
-        certId: '',
-        certType: 0,
-    };
+  const options = {
+    code: "",
+    qrLogin: false,
+    deleteAccountMode: false,
+    name: "",
+    certId: "",
+    certType: 0,
+  };
 
-    for (let i = 0; i < args.length; i++) {
-        if (args[i] === '--code' && args[i + 1]) {
-            options.code = args[++i];
-        }
-        if (args[i] === '--qr') {
-            options.qrLogin = true;
-        }
-        if (args[i] === '--wx') {
-            CONFIG.platform = 'wx';
-        }
-        if (args[i] === '--interval' && args[i + 1]) {
-            const sec = parseInt(args[++i]);
-            CONFIG.farmCheckInterval = Math.max(sec, 1) * 1000;
-        }
-        if (args[i] === '--friend-interval' && args[i + 1]) {
-            const sec = parseInt(args[++i]);
-            CONFIG.friendCheckInterval = Math.max(sec, 1) * 1000;  // 最低1秒
-        }
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--code" && args[i + 1]) {
+      options.code = args[++i];
     }
-    return options;
+    if (args[i] === "--qr") {
+      options.qrLogin = true;
+    }
+    if (args[i] === "--wx") {
+      CONFIG.platform = "wx";
+    }
+    if (args[i] === "--interval" && args[i + 1]) {
+      const sec = parseInt(args[++i]);
+      CONFIG.farmCheckInterval = Math.max(sec, 1) * 1000;
+    }
+    if (args[i] === "--friend-interval" && args[i + 1]) {
+      const sec = parseInt(args[++i]);
+      CONFIG.friendCheckInterval = Math.max(sec, 1) * 1000; // 最低1秒
+    }
+  }
+  return options;
 }
 
 // ============ 主函数 ============
 async function main() {
-    const args = process.argv.slice(2);
-    let usedQrLogin = false;
+  const args = process.argv.slice(2);
+  let usedQrLogin = false;
 
-    // 加载 proto 定义
-    await loadProto();
+  // 加载 proto 定义
+  await loadProto();
 
-    // 验证模式
-    if (args.includes('--verify')) {
-        await verifyMode();
-        return;
+  // 验证模式
+  if (args.includes("--verify")) {
+    await verifyMode();
+    return;
+  }
+
+  // 解码模式
+  if (args.includes("--decode")) {
+    await decodeMode(args);
+    return;
+  }
+
+  // 正常挂机模式
+  const options = parseArgs(args);
+
+  // QQ 平台支持扫码登录: 显式 --qr，或未传 --code 时自动触发
+  if (
+    !options.code &&
+    CONFIG.platform === "qq" &&
+    (options.qrLogin || !args.includes("--code"))
+  ) {
+    console.log("[扫码登录] 正在获取二维码...");
+    options.code = await getQQFarmCodeByScan();
+    usedQrLogin = true;
+    console.log(`[扫码登录] 获取成功，code=${options.code.substring(0, 8)}...`);
+  }
+
+  if (!options.code) {
+    if (CONFIG.platform === "wx") {
+      console.log("[参数] 微信模式仍需通过 --code 传入登录凭证");
     }
+    showHelp();
+    process.exit(1);
+  }
+  if (options.deleteAccountMode && (!options.name || !options.certId)) {
+    console.log("[参数] 注销账号模式必须提供 --name 和 --cert-id");
+    showHelp();
+    process.exit(1);
+  }
 
-    // 解码模式
-    if (args.includes('--decode')) {
-        await decodeMode(args);
-        return;
-    }
+  // 扫码阶段结束后清屏，避免状态栏覆盖二维码区域导致界面混乱
+  if (usedQrLogin && process.stdout.isTTY) {
+    process.stdout.write("\x1b[2J\x1b[H");
+  }
 
-    // 正常挂机模式
-    const options = parseArgs(args);
+  // 初始化状态栏
+  initStatusBar();
+  setStatusPlatform(CONFIG.platform);
+  emitRuntimeHint(true);
 
-    // QQ 平台支持扫码登录: 显式 --qr，或未传 --code 时自动触发
-    if (!options.code && CONFIG.platform === 'qq' && (options.qrLogin || !args.includes('--code'))) {
-        console.log('[扫码登录] 正在获取二维码...');
-        options.code = await getQQFarmCodeByScan();
-        usedQrLogin = true;
-        console.log(`[扫码登录] 获取成功，code=${options.code.substring(0, 8)}...`);
-    }
+  const platformName = CONFIG.platform === "wx" ? "微信" : "QQ";
+  console.log(
+    `[启动] ${platformName} code=${options.code.substring(0, 8)}... 农场${CONFIG.farmCheckInterval / 1000}s 好友${CONFIG.friendCheckInterval / 1000}s`,
+  );
 
-    if (!options.code) {
-        if (CONFIG.platform === 'wx') {
-            console.log('[参数] 微信模式仍需通过 --code 传入登录凭证');
-        }
-        showHelp();
-        process.exit(1);
-    }
-    if (options.deleteAccountMode && (!options.name || !options.certId)) {
-        console.log('[参数] 注销账号模式必须提供 --name 和 --cert-id');
-        showHelp();
-        process.exit(1);
-    }
+  // 连接并登录，登录成功后启动各功能模块
+  connect(options.code, async () => {
+    // 处理邀请码 (仅微信环境)
+    await processInviteCodes();
 
-    // 扫码阶段结束后清屏，避免状态栏覆盖二维码区域导致界面混乱
-    if (usedQrLogin && process.stdout.isTTY) {
-        process.stdout.write('\x1b[2J\x1b[H');
-    }
+    startFarmCheckLoop();
+    startFriendCheckLoop();
+    initTaskSystem();
 
-    // 初始化状态栏
-    initStatusBar();
-    setStatusPlatform(CONFIG.platform);
-    emitRuntimeHint(true);
+    // 启动时立即检查一次背包
+    setTimeout(() => debugSellFruits(), 5000);
+    startSellLoop(60000); // 每分钟自动出售仓库果实
+    startCouponShopLoop(CONFIG.couponBuyInterval);
+    startLarkNotifyLoop();
+  });
 
-    const platformName = CONFIG.platform === 'wx' ? '微信' : 'QQ';
-    console.log(`[启动] ${platformName} code=${options.code.substring(0, 8)}... 农场${CONFIG.farmCheckInterval / 1000}s 好友${CONFIG.friendCheckInterval / 1000}s`);
-
-    // 连接并登录，登录成功后启动各功能模块
-    connect(options.code, async () => {
-        // 处理邀请码 (仅微信环境)
-        await processInviteCodes();
-        
-        startFarmCheckLoop();
-        startFriendCheckLoop();
-        initTaskSystem();
-        
-        // 启动时立即检查一次背包
-        setTimeout(() => debugSellFruits(), 5000);
-        startSellLoop(60000);  // 每分钟自动出售仓库果实
-        startLarkNotifyLoop();
-    });
-
-    // 退出处理
-    process.on('SIGINT', () => {
-        cleanupStatusBar();
-        console.log('\n[退出] 正在断开...');
-        stopFarmCheckLoop();
-        stopFriendCheckLoop();
-        cleanupTaskSystem();
-        stopSellLoop();
-        stopLarkNotifyLoop();
-        cleanup();
-        const ws = getWs();
-        if (ws) ws.close();
-        process.exit(0);
-    });
+  // 退出处理
+  process.on("SIGINT", () => {
+    cleanupStatusBar();
+    console.log("\n[退出] 正在断开...");
+    stopFarmCheckLoop();
+    stopFriendCheckLoop();
+    cleanupTaskSystem();
+    stopSellLoop();
+    stopCouponShopLoop();
+    stopLarkNotifyLoop();
+    cleanup();
+    const ws = getWs();
+    if (ws) ws.close();
+    process.exit(0);
+  });
 }
 
-main().catch(err => {
-    console.error('启动失败:', err);
-    process.exit(1);
+main().catch((err) => {
+  console.error("启动失败:", err);
+  process.exit(1);
 });
