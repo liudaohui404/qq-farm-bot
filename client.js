@@ -101,6 +101,7 @@ QQ经典农场 挂机脚本
   --code              小程序 login() 返回的临时凭证 (必需)
   --qr                启动后使用QQ扫码获取登录code（仅QQ平台）
   --wx                使用微信登录 (默认为QQ小程序)
+  --white-radish      默认优先白萝卜（等价 forceLowestLevelCrop=true）
   --interval          自己农场巡查完成后等待秒数, 默认10秒, 最低10秒
   --friend-interval   好友巡查完成后等待秒数, 默认1秒, 最低1秒
   --verify            验证proto定义
@@ -143,6 +144,9 @@ function parseArgs(args) {
     }
     if (args[i] === "--wx") {
       CONFIG.platform = "wx";
+    }
+    if (args[i] === "--white-radish") {
+      CONFIG.forceLowestLevelCrop = true;
     }
     if (args[i] === "--interval" && args[i + 1]) {
       const sec = parseInt(args[++i]);

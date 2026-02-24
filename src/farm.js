@@ -123,6 +123,8 @@ async function insecticide(landIds) {
 // 普通肥料 ID
 const NORMAL_FERTILIZER_ID = 1011;
 const ORGANIC_FERTILIZER_ID = 1012;
+const WHITE_RADISH_SEED_ID = 20002;
+const WHITE_RADISH_PRIORITY_MAX_LEVEL = 28;
 const FERTILIZE_OP_SEC_PER_LAND = 0.05;
 let cachedPropShopId = null;
 
@@ -519,7 +521,7 @@ async function plantSeeds(seedId, landIds) {
   return successCount;
 }
 
-function buildSeedStrategyMap(level, landsCount) {
+function buildSeedStrategyMap(level, landsCount, hasOrganicFertilizer = true) {
   const map = new Map();
   try {
     const safeLands = Math.max(1, toNum(landsCount, 18));
@@ -557,7 +559,7 @@ function buildSeedStrategyMap(level, landsCount) {
       let organicTimes = 0;
       let targetReached = growAfterNormal <= targetMatureSeconds;
 
-      if (!targetReached) {
+      if (!targetReached && hasOrganicFertilizer) {
         if (phaseReduceSec > 0) {
           organicTimes = Math.ceil(
             (growAfterNormal - targetMatureSeconds) / phaseReduceSec,
@@ -615,12 +617,19 @@ function pruneParetoStates(states) {
   return kept.slice(0, 300);
 }
 
-function findBestSeedPlan(availableSeeds, landsNeed, gold, level, landsCount) {
+function findBestSeedPlan(
+  availableSeeds,
+  landsNeed,
+  gold,
+  level,
+  landsCount,
+  hasOrganicFertilizer = true,
+) {
   if (!availableSeeds || availableSeeds.length === 0 || landsNeed <= 0) {
     return { plan: [], plannedLands: 0, score: 0, cost: 0 };
   }
 
-  const strategyMap = buildSeedStrategyMap(level, landsCount);
+  const strategyMap = buildSeedStrategyMap(level, landsCount, hasOrganicFertilizer);
   let options = availableSeeds
     .map((seed) => {
       const limitCount = toNum(seed.goods.limit_count);
@@ -640,7 +649,7 @@ function findBestSeedPlan(availableSeeds, landsNeed, gold, level, landsCount) {
     .filter((x) => x.maxCount > 0 && x.price > 0)
     .sort((a, b) => b.score - a.score || a.price - b.price);
 
-  if (CONFIG.enableFiveMinuteMatureStrategy) {
+  if (CONFIG.enableFiveMinuteMatureStrategy && hasOrganicFertilizer) {
     const targetOptions = options.filter((x) => x.targetReached);
     if (targetOptions.length > 0) {
       options = targetOptions;
@@ -824,8 +833,38 @@ async function autoPlantEmptyLands(
     return;
   }
 
+  let hasOrganicFertilizer = false;
+  try {
+    const bagReply = await getBag();
+    const items = getBagItems(bagReply);
+    hasOrganicFertilizer = (items || []).some(
+      (item) =>
+        toNum(item.id) === ORGANIC_FERTILIZER_ID && toNum(item.count) > 0,
+    );
+  } catch (e) {
+    logWarn("施肥", `读取有机肥余量失败，按无有机肥处理: ${e.message}`);
+  }
+
   let plantingPlan;
-  if (CONFIG.forceLowestLevelCrop) {
+  if (state.level < WHITE_RADISH_PRIORITY_MAX_LEVEL) {
+    const whiteRadish =
+      seedOptions.find((s) => s.seedId === WHITE_RADISH_SEED_ID) || null;
+    if (whiteRadish) {
+      const count = Math.min(
+        landsToPlant.length,
+        Math.floor(state.gold / whiteRadish.price),
+      );
+      if (count > 0) {
+        plantingPlan = {
+          plan: [{ ...whiteRadish, count }],
+          plannedLands: count,
+          cost: whiteRadish.price * count,
+        };
+      }
+    }
+  }
+
+  if (!plantingPlan && CONFIG.forceLowestLevelCrop) {
     seedOptions.sort(
       (a, b) => a.requiredLevel - b.requiredLevel || a.price - b.price,
     );
@@ -846,13 +885,14 @@ async function autoPlantEmptyLands(
       plannedLands: count,
       cost: selected.price * count,
     };
-  } else {
+  } else if (!plantingPlan) {
     plantingPlan = findBestSeedPlan(
       seedOptions,
       landsToPlant.length,
       state.gold,
       state.level,
       unlockedLandCount,
+      hasOrganicFertilizer,
     );
     if (plantingPlan.plan.length === 0) {
       logWarn("商店", `金币不足或限购限制，当前金币 ${state.gold}`);
