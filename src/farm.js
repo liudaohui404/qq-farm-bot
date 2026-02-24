@@ -124,6 +124,7 @@ async function insecticide(landIds) {
 const NORMAL_FERTILIZER_ID = 1011;
 const ORGANIC_FERTILIZER_ID = 1012;
 const WHITE_RADISH_SEED_ID = 20002;
+const WHITE_RADISH_PRIORITY_MAX_LEVEL = 28;
 const FERTILIZE_OP_SEC_PER_LAND = 0.05;
 let cachedPropShopId = null;
 
@@ -845,7 +846,7 @@ async function autoPlantEmptyLands(
   }
 
   let plantingPlan;
-  if (state.level < 28) {
+  if (state.level < WHITE_RADISH_PRIORITY_MAX_LEVEL) {
     const whiteRadish =
       seedOptions.find((s) => s.seedId === WHITE_RADISH_SEED_ID) || null;
     if (whiteRadish) {

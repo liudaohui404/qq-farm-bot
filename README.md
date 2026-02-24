@@ -133,8 +133,8 @@ node tools/calc-exp-yield.js --input tools/seed-shop-merged-export.json
 2. 读取账号等级 + 已解锁土地块数，调用 `tools/calc-exp-yield.js` 的 `getPlantingRecommendation(level, lands)`。
 3. 按普通肥经验效率排名，从高到低选择在商店可买到的第一个种子。
 4. 若推荐失败，则走兜底排序逻辑。
-5. 背包有有机肥时优先按有机肥策略计算；无有机肥时自动回退默认经验计算。
-6. 账号低于 Lv28 时优先种植白萝卜。
+5. 账号低于 Lv28 时优先种植白萝卜。
+6. 背包有有机肥时优先按有机肥策略计算；无有机肥时自动回退默认经验计算。
 
 强制最低等级作物（通常白萝卜）：
 - 在 `src/config.js` 设置 `forceLowestLevelCrop: true` 后，直接选择最低等级种子。
