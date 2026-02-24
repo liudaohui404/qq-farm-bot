@@ -8,6 +8,7 @@ const { CONFIG } = require('./config');
 const { types } = require('./proto');
 const { toLong, toNum, syncServerTime, log, logWarn } = require('./utils');
 const { updateStatusFromLogin, updateStatusGold, updateStatusLevel } = require('./status');
+const { notifyExpProgressIfNeeded } = require('./larkNotifier');
 
 // ============ 事件发射器 (用于推送通知) ============
 const networkEvents = new EventEmitter();
@@ -196,6 +197,11 @@ function handleNotify(msg) {
                     if (id === 1101 || id === 2) {
                         userState.exp = count;
                         updateStatusLevel(userState.level, count);
+                        notifyExpProgressIfNeeded({
+                            name: userState.name,
+                            level: userState.level,
+                            exp: userState.exp,
+                        });
                     } else if (id === 1 || id === 1001) {
                         userState.gold = count;
                         updateStatusGold(count);
@@ -220,6 +226,11 @@ function handleNotify(msg) {
                         updateStatusLevel(userState.level, exp);
                     }
                     updateStatusGold(userState.gold);
+                    notifyExpProgressIfNeeded({
+                        name: userState.name,
+                        level: userState.level,
+                        exp: userState.exp,
+                    });
                     // 升级提示
                     if (userState.level !== oldLevel) {
                         log('系统', `升级! Lv${oldLevel} → Lv${userState.level}`);
@@ -341,6 +352,11 @@ function sendLogin(onLoginSuccess) {
                     name: userState.name,
                     level: userState.level,
                     gold: userState.gold,
+                    exp: userState.exp,
+                });
+                notifyExpProgressIfNeeded({
+                    name: userState.name,
+                    level: userState.level,
                     exp: userState.exp,
                 });
 

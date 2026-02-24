@@ -28,7 +28,7 @@
 - **邀请码处理** — 启动时自动处理 share.txt 中的邀请链接（微信环境，share.txt有示例，是小程序的path）
 - **状态栏显示** — 终端顶部固定显示平台/昵称/等级/经验/金币
 - **经验进度** — 显示当前等级经验进度
-- **飞书推送** — 配置 webhook 后每 10 分钟推送当前角色等级与经验
+- **飞书推送** — 扫码时推送二维码链接；经验进度每跨过 10% 阈值推送一次
 - **心跳保活** — 自动维持 WebSocket 连接
 
 ### 开发工具
@@ -227,9 +227,21 @@ const CONFIG = {
     farmCheckInterval: 1000,     // 农场巡查完成后等待间隔
     friendCheckInterval: 10000,  // 好友巡查完成后等待间隔
     forceLowestLevelCrop: false, // true: 固定最低等级作物（白萝卜优先），跳过经验效率分析
-    larkWebhook: '',             // 飞书机器人 Webhook，留空则关闭等级/经验推送（每10分钟一次）
+    larkWebhook: '',             // 飞书机器人 Webhook（优先读环境变量 FEISHU_WEBHOOK/LARK_WEBHOOK，此项作兜底）
 };
 ```
+
+  ### 飞书 Webhook 环境变量
+
+  优先读取以下环境变量：
+
+  ```bash
+  export FEISHU_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+  # 或
+  export LARK_WEBHOOK="https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
+  ```
+
+  若两个环境变量都未设置，则回退使用 `src/config.js` 中的 `larkWebhook`。
 
 ### src/friend.js
 

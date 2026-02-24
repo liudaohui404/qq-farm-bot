@@ -24,7 +24,7 @@ const CONFIG = {
   allowOrganicBuyFallbackToNormal: false, // 有机肥缺货时是否回退购买普通肥
   fertilizerShopId: 0, // 化肥购买入口ID（0=自动识别）
   fertilizerShopNameKeyword: "商城", // 自动识别时优先匹配的商店名称关键字
-  larkWebhook: "", // 飞书机器人 Webhook，留空则关闭等级/经验推送
+  larkWebhook: "", // 飞书机器人 Webhook（优先读环境变量 FEISHU_WEBHOOK/LARK_WEBHOOK，此项作兜底）
   device_info: {
     client_version: "1.6.0.14_20251224",
     sys_software: "iOS 26.2.1",

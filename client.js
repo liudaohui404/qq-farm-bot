@@ -13,7 +13,7 @@
 
 const { CONFIG } = require("./src/config");
 const { loadProto } = require("./src/proto");
-const { connect, cleanup, getWs, getUserState } = require("./src/network");
+const { connect, cleanup, getWs } = require("./src/network");
 const { startFarmCheckLoop, stopFarmCheckLoop } = require("./src/farm");
 const { startFriendCheckLoop, stopFriendCheckLoop } = require("./src/friend");
 const { initTaskSystem, cleanupTaskSystem } = require("./src/task");
@@ -30,60 +30,8 @@ const {
 const { startCouponShopLoop, stopCouponShopLoop } = require("./src/couponShop");
 const { processInviteCodes } = require("./src/invite");
 const { verifyMode, decodeMode } = require("./src/decode");
-const { emitRuntimeHint, sleep, logWarn } = require("./src/utils");
+const { emitRuntimeHint } = require("./src/utils");
 const { getQQFarmCodeByScan } = require("./src/qqQrLogin");
-const axios = require("axios");
-
-const LARK_NOTIFY_INTERVAL = 10 * 60 * 1000;
-let larkNotifyTimer = null;
-
-function formatLarkError(err) {
-  if (err && err.response) {
-    const body = JSON.stringify(err.response.data);
-    const bodySafe = body.length > 300 ? `${body.slice(0, 300)}...` : body;
-    return `${err.message} (status=${err.response.status}, body=${bodySafe})`;
-  }
-  return err && err.message ? err.message : String(err);
-}
-
-async function sendLarkRoleStatus() {
-  if (!CONFIG.larkWebhook) return;
-  const state = getUserState();
-  try {
-    await axios.post(
-      CONFIG.larkWebhook,
-      {
-        msg_type: "text",
-        content: {
-          text: `[农场状态] 角色:${state.name || "未知"} 等级:Lv${state.level || 0} 经验:${state.exp || 0}`,
-        },
-      },
-      { timeout: 10000 },
-    );
-  } catch (err) {
-    throw new Error(`飞书推送请求失败: ${formatLarkError(err)}`);
-  }
-}
-
-function runLarkNotify(errorPrefix) {
-  sendLarkRoleStatus().catch((err) =>
-    logWarn("飞书", `${errorPrefix}: ${err.message}`),
-  );
-}
-
-function startLarkNotifyLoop() {
-  if (!CONFIG.larkWebhook) return;
-  runLarkNotify("首次推送失败");
-  larkNotifyTimer = setInterval(() => {
-    runLarkNotify("推送失败");
-  }, LARK_NOTIFY_INTERVAL);
-}
-
-function stopLarkNotifyLoop() {
-  if (!larkNotifyTimer) return;
-  clearInterval(larkNotifyTimer);
-  larkNotifyTimer = null;
-}
 
 // ============ 帮助信息 ============
 function showHelp() {
@@ -236,7 +184,6 @@ async function main() {
     setTimeout(() => debugSellFruits(), 5000);
     startSellLoop(60000); // 每分钟自动出售仓库果实
     startCouponShopLoop(CONFIG.couponBuyInterval);
-    startLarkNotifyLoop();
   });
 
   // 退出处理
@@ -248,7 +195,6 @@ async function main() {
     cleanupTaskSystem();
     stopSellLoop();
     stopCouponShopLoop();
-    stopLarkNotifyLoop();
     cleanup();
     const ws = getWs();
     if (ws) ws.close();
