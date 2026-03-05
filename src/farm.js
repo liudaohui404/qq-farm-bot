@@ -1082,7 +1082,10 @@ async function autoPlantEmptyLands(
         `种后立即回铲 ${totalPlantedLands.length} 块 (${totalPlantedLands.join(",")})`,
       );
     } catch (e) {
-      logWarn("经验模式", `种后立即回铲失败: ${e.message}`);
+      logWarn(
+        "经验模式",
+        `种后立即回铲失败(${totalPlantedLands.join(",")}): ${e.message}`,
+      );
     }
   }
 }
