@@ -1280,6 +1280,10 @@ async function checkFarm() {
 
     const lands = landsReply.lands;
     const status = analyzeLands(lands);
+    const unlockedLandIds = lands
+      .filter((land) => land && land.unlocked)
+      .map((land) => toNum(land.id))
+      .filter((id) => id > 0);
     const unlockedLandCount = lands.filter(
       (land) => land && land.unlocked,
     ).length;
@@ -1299,34 +1303,26 @@ async function checkFarm() {
     if (status.empty.length) statusParts.push(`空:${status.empty.length}`);
     statusParts.push(`长:${status.growing.length}`);
 
-    const hasWork =
-      status.harvestable.length ||
-      status.needWeed.length ||
-      status.needBug.length ||
-      status.needWater.length ||
-      status.dead.length ||
-      status.empty.length;
+    const hasWork = CONFIG.whiteRadishExpMode
+      ? unlockedLandIds.length > 0
+      : status.harvestable.length ||
+          status.needWeed.length ||
+          status.needBug.length ||
+          status.needWater.length ||
+          status.dead.length ||
+          status.empty.length;
 
     // 执行操作并收集结果
     const actions = [];
 
     if (CONFIG.whiteRadishExpMode) {
       // 白萝卜刷经验模式：只执行“铲除 + 种植”，不做收获/浇水/除草/除虫。
-      // 这里会主动铲除生长中/可收获/枯死作物，以实现“种植→铲除→再种植”的高频经验循环。
-      const landsToRemove = Array.from(
-        new Set([...status.harvestable, ...status.growing, ...status.dead]),
-      );
-      const allEmptyLands = [...status.empty];
-      if (landsToRemove.length > 0 || allEmptyLands.length > 0) {
+      // 强制对所有已解锁地块调用 removePlant，以实现“种植→铲除→再种植”的高频经验循环。
+      const landsToRemove = [...unlockedLandIds];
+      if (landsToRemove.length > 0) {
         try {
-          await autoPlantEmptyLands(
-            landsToRemove,
-            allEmptyLands,
-            unlockedLandCount,
-          );
-          actions.push(
-            `铲除目标${landsToRemove.length}/种植${landsToRemove.length + allEmptyLands.length}`,
-          );
+          await autoPlantEmptyLands(landsToRemove, [], unlockedLandCount);
+          actions.push(`强制铲除${landsToRemove.length}/种植${landsToRemove.length}`);
         } catch (e) {
           logWarn("经验模式", e.message);
         }
