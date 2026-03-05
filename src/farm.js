@@ -126,20 +126,36 @@ const ORGANIC_FERTILIZER_ID = 1012;
 const WHITE_RADISH_SEED_ID = 20002;
 const WHITE_RADISH_PRIORITY_MAX_LEVEL = 28;
 const FERTILIZE_OP_SEC_PER_LAND = 0.05;
+const MS_PER_HOUR = 3600000;
+const EXP_MODE_DEFAULT_TARGET_PER_HOUR = 70000;
+const EXP_MODE_DEFAULT_EXP_PER_LAND_PER_ROUND = 44;
+const EXP_MODE_INTERVAL_CHANGE_THRESHOLD = 500;
 let cachedPropShopId = null;
 let lastExpModeIntervalMs = 0;
 
 function tuneExpModeInterval(unlockedLandCount) {
   if (!CONFIG.whiteRadishExpMode) return;
-  const targetExpPerHour = Math.max(1, toNum(CONFIG.expModeTargetPerHour, 70000));
-  const expPerLandPerRound = Math.max(1, toNum(CONFIG.expModeExpPerLandPerRound, 44));
+  const targetExpPerHour = Math.max(
+    1,
+    toNum(CONFIG.expModeTargetPerHour, EXP_MODE_DEFAULT_TARGET_PER_HOUR),
+  );
+  const expPerLandPerRound = Math.max(
+    1,
+    toNum(
+      CONFIG.expModeExpPerLandPerRound,
+      EXP_MODE_DEFAULT_EXP_PER_LAND_PER_ROUND,
+    ),
+  );
   const lands = Math.max(1, toNum(unlockedLandCount, 1));
   const estimatedRoundExp = lands * expPerLandPerRound;
   const tunedIntervalMs = Math.max(
     1000,
-    Math.round((estimatedRoundExp * 3600000) / targetExpPerHour),
+    Math.round((estimatedRoundExp * MS_PER_HOUR) / targetExpPerHour),
   );
-  if (Math.abs(tunedIntervalMs - lastExpModeIntervalMs) >= 500) {
+  if (
+    Math.abs(tunedIntervalMs - lastExpModeIntervalMs) >=
+    EXP_MODE_INTERVAL_CHANGE_THRESHOLD
+  ) {
     CONFIG.farmCheckInterval = tunedIntervalMs;
     lastExpModeIntervalMs = tunedIntervalMs;
     log(
@@ -1295,7 +1311,8 @@ async function checkFarm() {
     const actions = [];
 
     if (CONFIG.whiteRadishExpMode) {
-      // 白萝卜刷经验模式：只执行“铲除 + 种植”，不做收获/浇水/除草/除虫
+      // 白萝卜刷经验模式：只执行“铲除 + 种植”，不做收获/浇水/除草/除虫。
+      // 这里会主动铲除生长中/可收获/枯死作物，以实现“种植→铲除→再种植”的高频经验循环。
       const landsToRemove = Array.from(
         new Set([...status.harvestable, ...status.growing, ...status.dead]),
       );
@@ -1308,7 +1325,7 @@ async function checkFarm() {
             unlockedLandCount,
           );
           actions.push(
-            `铲除${landsToRemove.length}/种植${landsToRemove.length + allEmptyLands.length}`,
+            `铲除目标${landsToRemove.length}/种植${landsToRemove.length + allEmptyLands.length}`,
           );
         } catch (e) {
           logWarn("经验模式", e.message);
