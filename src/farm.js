@@ -1280,10 +1280,12 @@ async function checkFarm() {
 
     const lands = landsReply.lands;
     const status = analyzeLands(lands);
-    const unlockedLandIds = lands
-      .filter((land) => land && land.unlocked)
-      .map((land) => toNum(land.id))
-      .filter((id) => id > 0);
+    const unlockedLandIds = CONFIG.whiteRadishExpMode
+      ? lands
+          .filter((land) => land && land.unlocked)
+          .map((land) => toNum(land.id))
+          .filter((id) => id > 0)
+      : [];
     const unlockedLandCount = lands.filter(
       (land) => land && land.unlocked,
     ).length;
@@ -1318,9 +1320,10 @@ async function checkFarm() {
     if (CONFIG.whiteRadishExpMode) {
       // 白萝卜刷经验模式：只执行“铲除 + 种植”，不做收获/浇水/除草/除虫。
       // 强制对所有已解锁地块调用 removePlant，以实现“种植→铲除→再种植”的高频经验循环。
-      const landsToRemove = [...unlockedLandIds];
+      const landsToRemove = unlockedLandIds;
       if (landsToRemove.length > 0) {
         try {
+          // 经验模式先统一铲除已解锁地块，因此这里不额外传入空地列表。
           await autoPlantEmptyLands(landsToRemove, [], unlockedLandCount);
           actions.push(`强制铲除${landsToRemove.length}/种植${landsToRemove.length}`);
         } catch (e) {
