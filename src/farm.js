@@ -1072,6 +1072,19 @@ async function autoPlantEmptyLands(
       log("施肥", `已为 ${fertilized}/${totalPlantedLands.length} 块地施肥`);
     }
   }
+
+  // 5. 白萝卜刷经验：种完立即再铲除，不等待成长
+  if (totalPlantedLands.length > 0 && CONFIG.whiteRadishExpMode) {
+    try {
+      await removePlant(totalPlantedLands);
+      log(
+        "经验模式",
+        `种后立即回铲 ${totalPlantedLands.length} 块 (${totalPlantedLands.join(",")})`,
+      );
+    } catch (e) {
+      logWarn("经验模式", `种后立即回铲失败: ${e.message}`);
+    }
+  }
 }
 
 // ============ 土地分析 ============
