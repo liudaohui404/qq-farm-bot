@@ -127,6 +127,27 @@ const WHITE_RADISH_SEED_ID = 20002;
 const WHITE_RADISH_PRIORITY_MAX_LEVEL = 28;
 const FERTILIZE_OP_SEC_PER_LAND = 0.05;
 let cachedPropShopId = null;
+let lastExpModeIntervalMs = 0;
+
+function tuneExpModeInterval(unlockedLandCount) {
+  if (!CONFIG.whiteRadishExpMode) return;
+  const targetExpPerHour = Math.max(1, toNum(CONFIG.expModeTargetPerHour, 70000));
+  const expPerLandPerRound = Math.max(1, toNum(CONFIG.expModeExpPerLandPerRound, 44));
+  const lands = Math.max(1, toNum(unlockedLandCount, 1));
+  const estimatedRoundExp = lands * expPerLandPerRound;
+  const tunedIntervalMs = Math.max(
+    1000,
+    Math.round((estimatedRoundExp * 3600000) / targetExpPerHour),
+  );
+  if (Math.abs(tunedIntervalMs - lastExpModeIntervalMs) >= 500) {
+    CONFIG.farmCheckInterval = tunedIntervalMs;
+    lastExpModeIntervalMs = tunedIntervalMs;
+    log(
+      "经验模式",
+      `目标${targetExpPerHour}/h，按${lands}块地估算每轮${estimatedRoundExp}经验，巡查间隔设为${(tunedIntervalMs / 1000).toFixed(1)}秒`,
+    );
+  }
+}
 
 async function getShopProfiles() {
   const body = types.ShopProfilesRequest.encode(
@@ -846,7 +867,32 @@ async function autoPlantEmptyLands(
   }
 
   let plantingPlan;
-  if (state.level < WHITE_RADISH_PRIORITY_MAX_LEVEL) {
+  if (CONFIG.whiteRadishExpMode) {
+    const whiteRadish =
+      seedOptions.find((s) => s.seedId === WHITE_RADISH_SEED_ID) || null;
+    if (!whiteRadish) {
+      logWarn("商店", "白萝卜种子不可购买，无法执行白萝卜刷经验模式");
+      return;
+    }
+    const count = Math.min(
+      landsToPlant.length,
+      Math.floor(state.gold / whiteRadish.price),
+    );
+    if (count <= 0) {
+      logWarn(
+        "商店",
+        `金币不足! 当前 ${state.gold} 金币，无法购买白萝卜种子`,
+      );
+      return;
+    }
+    plantingPlan = {
+      plan: [{ ...whiteRadish, count, organicTimes: 0 }],
+      plannedLands: count,
+      cost: whiteRadish.price * count,
+    };
+  }
+
+  if (!plantingPlan && state.level < WHITE_RADISH_PRIORITY_MAX_LEVEL) {
     const whiteRadish =
       seedOptions.find((s) => s.seedId === WHITE_RADISH_SEED_ID) || null;
     if (whiteRadish) {
@@ -996,7 +1042,7 @@ async function autoPlantEmptyLands(
   }
 
   // 4. 施肥（逐块拖动，间隔50ms）
-  if (totalPlantedLands.length > 0) {
+  if (totalPlantedLands.length > 0 && !CONFIG.whiteRadishExpMode) {
     await logCurrentFertilizerBalance();
     let fertilized = 0;
     if (CONFIG.enableFiveMinuteMatureStrategy) {
@@ -1221,6 +1267,7 @@ async function checkFarm() {
     const unlockedLandCount = lands.filter(
       (land) => land && land.unlocked,
     ).length;
+    tuneExpModeInterval(unlockedLandCount);
     isFirstFarmCheck = false;
 
     // 构建状态摘要
@@ -1247,58 +1294,80 @@ async function checkFarm() {
     // 执行操作并收集结果
     const actions = [];
 
-    // 一键操作：除草、除虫、浇水可以并行执行（游戏中都是一键完成）
-    const batchOps = [];
-    if (status.needWeed.length > 0) {
-      batchOps.push(
-        weedOut(status.needWeed)
-          .then(() => actions.push(`除草${status.needWeed.length}`))
-          .catch((e) => logWarn("除草", e.message)),
+    if (CONFIG.whiteRadishExpMode) {
+      // 白萝卜刷经验模式：只执行“铲除 + 种植”，不做收获/浇水/除草/除虫
+      const landsToRemove = Array.from(
+        new Set([...status.harvestable, ...status.growing, ...status.dead]),
       );
-    }
-    if (status.needBug.length > 0) {
-      batchOps.push(
-        insecticide(status.needBug)
-          .then(() => actions.push(`除虫${status.needBug.length}`))
-          .catch((e) => logWarn("除虫", e.message)),
-      );
-    }
-    if (status.needWater.length > 0) {
-      batchOps.push(
-        waterLand(status.needWater)
-          .then(() => actions.push(`浇水${status.needWater.length}`))
-          .catch((e) => logWarn("浇水", e.message)),
-      );
-    }
-    if (batchOps.length > 0) {
-      await Promise.all(batchOps);
-    }
-
-    // 收获（一键操作）
-    let harvestedLandIds = [];
-    if (status.harvestable.length > 0) {
-      try {
-        await harvest(status.harvestable);
-        actions.push(`收获${status.harvestable.length}`);
-        harvestedLandIds = [...status.harvestable];
-      } catch (e) {
-        logWarn("收获", e.message);
+      const allEmptyLands = [...status.empty];
+      if (landsToRemove.length > 0 || allEmptyLands.length > 0) {
+        try {
+          await autoPlantEmptyLands(
+            landsToRemove,
+            allEmptyLands,
+            unlockedLandCount,
+          );
+          actions.push(
+            `铲除${landsToRemove.length}/种植${landsToRemove.length + allEmptyLands.length}`,
+          );
+        } catch (e) {
+          logWarn("经验模式", e.message);
+        }
       }
-    }
-
-    // 铲除 + 种植 + 施肥（需要顺序执行）
-    const allDeadLands = [...status.dead, ...harvestedLandIds];
-    const allEmptyLands = [...status.empty];
-    if (allDeadLands.length > 0 || allEmptyLands.length > 0) {
-      try {
-        await autoPlantEmptyLands(
-          allDeadLands,
-          allEmptyLands,
-          unlockedLandCount,
+    } else {
+      // 一键操作：除草、除虫、浇水可以并行执行（游戏中都是一键完成）
+      const batchOps = [];
+      if (status.needWeed.length > 0) {
+        batchOps.push(
+          weedOut(status.needWeed)
+            .then(() => actions.push(`除草${status.needWeed.length}`))
+            .catch((e) => logWarn("除草", e.message)),
         );
-        actions.push(`种植${allDeadLands.length + allEmptyLands.length}`);
-      } catch (e) {
-        logWarn("种植", e.message);
+      }
+      if (status.needBug.length > 0) {
+        batchOps.push(
+          insecticide(status.needBug)
+            .then(() => actions.push(`除虫${status.needBug.length}`))
+            .catch((e) => logWarn("除虫", e.message)),
+        );
+      }
+      if (status.needWater.length > 0) {
+        batchOps.push(
+          waterLand(status.needWater)
+            .then(() => actions.push(`浇水${status.needWater.length}`))
+            .catch((e) => logWarn("浇水", e.message)),
+        );
+      }
+      if (batchOps.length > 0) {
+        await Promise.all(batchOps);
+      }
+
+      // 收获（一键操作）
+      let harvestedLandIds = [];
+      if (status.harvestable.length > 0) {
+        try {
+          await harvest(status.harvestable);
+          actions.push(`收获${status.harvestable.length}`);
+          harvestedLandIds = [...status.harvestable];
+        } catch (e) {
+          logWarn("收获", e.message);
+        }
+      }
+
+      // 铲除 + 种植 + 施肥（需要顺序执行）
+      const allDeadLands = [...status.dead, ...harvestedLandIds];
+      const allEmptyLands = [...status.empty];
+      if (allDeadLands.length > 0 || allEmptyLands.length > 0) {
+        try {
+          await autoPlantEmptyLands(
+            allDeadLands,
+            allEmptyLands,
+            unlockedLandCount,
+          );
+          actions.push(`种植${allDeadLands.length + allEmptyLands.length}`);
+        } catch (e) {
+          logWarn("种植", e.message);
+        }
       }
     }
 

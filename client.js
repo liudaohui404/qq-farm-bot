@@ -50,6 +50,7 @@ QQ经典农场 挂机脚本
   --qr                启动后使用QQ扫码获取登录code（仅QQ平台）
   --wx                使用微信登录 (默认为QQ小程序)
   --white-radish      默认优先白萝卜（等价 forceLowestLevelCrop=true）
+  --white-radish-exp  白萝卜刷经验模式（种植→铲除→种植，目标约7万经验/小时）
   --interval          自己农场巡查完成后等待秒数, 默认10秒, 最低10秒
   --friend-interval   好友巡查完成后等待秒数, 默认1秒, 最低1秒
   --verify            验证proto定义
@@ -95,6 +96,11 @@ function parseArgs(args) {
     }
     if (args[i] === "--white-radish") {
       CONFIG.forceLowestLevelCrop = true;
+    }
+    if (args[i] === "--white-radish-exp") {
+      CONFIG.whiteRadishExpMode = true;
+      CONFIG.forceLowestLevelCrop = true;
+      CONFIG.enableFiveMinuteMatureStrategy = false;
     }
     if (args[i] === "--interval" && args[i + 1]) {
       const sec = parseInt(args[++i]);
@@ -170,6 +176,11 @@ async function main() {
   console.log(
     `[启动] ${platformName} code=${options.code.substring(0, 8)}... 农场${CONFIG.farmCheckInterval / 1000}s 好友${CONFIG.friendCheckInterval / 1000}s`,
   );
+  if (CONFIG.whiteRadishExpMode) {
+    console.log(
+      `[启动] 白萝卜刷经验模式已开启，目标经验/小时: ${CONFIG.expModeTargetPerHour}`,
+    );
+  }
 
   // 连接并登录，登录成功后启动各功能模块
   connect(options.code, async () => {

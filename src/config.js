@@ -12,6 +12,9 @@ const CONFIG = {
   friendCheckInterval: 10000, // 好友巡查完成后等待间隔 (可通过 --friend-interval 修改, 最低1秒)
   fertilizeInterval: 180, // 施肥间隔（毫秒），调大可降低操作频率
   forceLowestLevelCrop: false, // 开启后固定种最低等级作物（通常是白萝卜），跳过经验效率分析
+  whiteRadishExpMode: false, // 白萝卜刷经验模式：种植->铲除->种植循环
+  expModeTargetPerHour: 70000, // 刷经验模式目标经验/小时
+  expModeExpPerLandPerRound: 44, // 刷经验模式每块地每轮经验（白萝卜按44估算）
   taskBaseRewardOnly: true, // 任务只领基础奖励（不走分享翻倍）
   autoBuyOrganicFertilizerWithCoupon: false, // 自动用点券购买有机化肥容器
   couponBuyInterval: 60000, // 点券商店检查间隔（毫秒）

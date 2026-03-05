@@ -79,6 +79,7 @@ node client.js --code <code> --interval 5 --friend-interval 2
 | `--code` | 小程序登录凭证（**必需**） | — |
 | `--wx` | 使用微信登录 | QQ 小程序 |
 | `--white-radish` | 默认优先白萝卜（等价 `forceLowestLevelCrop=true`） | 关闭 |
+| `--white-radish-exp` | 白萝卜刷经验模式（种植→铲除→种植，自动按地块数将节奏控制在约 7 万经验/小时） | 关闭 |
 | `--interval` | 自己农场巡查间隔（秒） | 2 |
 | `--friend-interval` | 好友巡查间隔（秒） | 1 |
 | `--verify` | 验证 proto 定义是否正确 | — |
@@ -139,6 +140,10 @@ node tools/calc-exp-yield.js --input tools/seed-shop-merged-export.json
 强制最低等级作物（通常白萝卜）：
 - 在 `src/config.js` 设置 `forceLowestLevelCrop: true` 后，直接选择最低等级种子。
 - 开启后不再执行经验效率分析推荐。
+
+白萝卜刷经验模式：
+- 启动参数 `--white-radish-exp` 后，脚本只购买白萝卜并执行“种植→铲除→再种植”循环。
+- 该模式会根据“地块数 × 44 经验/轮”估算并动态调整农场巡查间隔，目标约 `70000` 经验/小时（可在 `src/config.js` 中调整）。
 
 ## 项目结构
 
