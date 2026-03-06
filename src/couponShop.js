@@ -4,7 +4,7 @@
 
 const { types } = require("./proto");
 const { CONFIG } = require("./config");
-const { sendMsgAsync } = require("./network");
+const network = require("./network");
 const { toLong, toNum, log, logWarn } = require("./utils");
 const { getItemName } = require("./gameConfig");
 const { getBag, getBagItems } = require("./warehouse");
@@ -13,13 +13,22 @@ const COUPON_ITEM_ID = 1002; // 点券
 const ORGANIC_FERTILIZER_ITEM_ID = 1012; // 有机化肥容器
 
 let buyTimer = null;
+let buyStartTimer = null;
 let cachedPropShopId = null;
+let activeContext = null;
+
+function request(serviceName, methodName, bodyBytes, timeout) {
+  if (activeContext) {
+    return activeContext.request(serviceName, methodName, bodyBytes, timeout);
+  }
+  return network.sendMsgAsync(serviceName, methodName, bodyBytes, timeout);
+}
 
 async function getShopProfiles() {
   const body = types.ShopProfilesRequest.encode(
     types.ShopProfilesRequest.create({}),
   ).finish();
-  const { body: replyBody } = await sendMsgAsync(
+  const { body: replyBody } = await request(
     "gamepb.shoppb.ShopService",
     "ShopProfiles",
     body,
@@ -88,7 +97,7 @@ async function getShopInfo(shopId) {
       shop_id: toLong(shopId),
     }),
   ).finish();
-  const { body: replyBody } = await sendMsgAsync(
+  const { body: replyBody } = await request(
     "gamepb.shoppb.ShopService",
     "ShopInfo",
     body,
@@ -104,7 +113,7 @@ async function buyGoods(goodsId, num, price) {
       price: toLong(price),
     }),
   ).finish();
-  const { body: replyBody } = await sendMsgAsync(
+  const { body: replyBody } = await request(
     "gamepb.shoppb.ShopService",
     "BuyGoods",
     body,
@@ -194,10 +203,21 @@ async function buyOrganicFertilizerWithCouponOnce() {
 }
 
 function startCouponShopLoop(interval = 60000) {
-  if (buyTimer) return;
+  if (buyTimer || buyStartTimer) return;
   const safeInterval = Math.max(10000, toNum(interval, 60000));
 
-  setTimeout(() => {
+  if (activeContext) {
+    activeContext.scheduleInterval(
+      "coupon-shop-loop",
+      () => buyOrganicFertilizerWithCouponOnce(),
+      safeInterval,
+      8000,
+    );
+    return;
+  }
+
+  buyStartTimer = setTimeout(() => {
+    buyStartTimer = null;
     buyOrganicFertilizerWithCouponOnce();
     buyTimer = setInterval(() => {
       buyOrganicFertilizerWithCouponOnce();
@@ -206,13 +226,27 @@ function startCouponShopLoop(interval = 60000) {
 }
 
 function stopCouponShopLoop() {
+  if (buyStartTimer) {
+    clearTimeout(buyStartTimer);
+    buyStartTimer = null;
+  }
   if (!buyTimer) return;
   clearInterval(buyTimer);
   buyTimer = null;
 }
 
+async function init(context) {
+  activeContext = context;
+  startCouponShopLoop(CONFIG.couponBuyInterval);
+}
+
+async function cleanup() {
+  stopCouponShopLoop();
+  activeContext = null;
+}
+
 module.exports = {
   buyOrganicFertilizerWithCouponOnce,
-  startCouponShopLoop,
-  stopCouponShopLoop,
+  init,
+  cleanup,
 };

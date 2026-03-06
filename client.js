@@ -13,25 +13,40 @@
 
 const { CONFIG } = require("./src/config");
 const { loadProto } = require("./src/proto");
-const { connect, cleanup, getWs } = require("./src/network");
-const { startFarmCheckLoop, stopFarmCheckLoop } = require("./src/farm");
-const { startFriendCheckLoop, stopFriendCheckLoop } = require("./src/friend");
-const { initTaskSystem, cleanupTaskSystem } = require("./src/task");
+const {
+  connect,
+  cleanup,
+  getWs,
+  getConnectionRuntime,
+} = require("./src/network");
+const { RuntimeManager } = require("./src/runtimeManager");
+const { installReloadSignal } = require("./src/reloadSignal");
 const {
   initStatusBar,
   cleanupStatusBar,
   setStatusPlatform,
 } = require("./src/status");
-const {
-  startSellLoop,
-  stopSellLoop,
-  debugSellFruits,
-} = require("./src/warehouse");
-const { startCouponShopLoop, stopCouponShopLoop } = require("./src/couponShop");
+const { debugSellFruits } = require("./src/warehouse");
 const { processInviteCodes } = require("./src/invite");
 const { verifyMode, decodeMode } = require("./src/decode");
 const { emitRuntimeHint } = require("./src/utils");
 const { getQQFarmCodeByScan } = require("./src/qqQrLogin");
+const EventEmitter = require("events");
+
+let runtimeManager = null;
+let uninstallReloadSignal = null;
+let shuttingDown = false;
+
+function getReloadRuntimeState() {
+  const connectionRuntime = getConnectionRuntime();
+  const state = connectionRuntime ? connectionRuntime.getUserState() : null;
+  return {
+    loggedIn: !!(state && state.gid),
+    gid: state ? state.gid : 0,
+    name: state ? state.name : "",
+    platform: CONFIG.platform,
+  };
+}
 
 // ============ 帮助信息 ============
 function showHelp() {
@@ -42,6 +57,7 @@ QQ经典农场 挂机脚本
 用法:
   node client.js --code <登录code> [--wx] [--interval <秒>] [--friend-interval <秒>]
   node client.js --qr [--interval <秒>] [--friend-interval <秒>]
+  node client.js --mock [--reload-port <端口>]
   node client.js --verify
   node client.js --decode <数据> [--hex] [--gate] [--type <消息类型>]
 
@@ -49,9 +65,11 @@ QQ经典农场 挂机脚本
   --code              小程序 login() 返回的临时凭证 (必需)
   --qr                启动后使用QQ扫码获取登录code（仅QQ平台）
   --wx                使用微信登录 (默认为QQ小程序)
+  --mock              不连接服务器，启动一个本地 mock 运行时用于测试热重载
   --white-radish      默认优先白萝卜（等价 forceLowestLevelCrop=true）
   --interval          自己农场巡查完成后等待秒数, 默认10秒, 最低10秒
   --friend-interval   好友巡查完成后等待秒数, 默认1秒, 最低1秒
+  --reload-port       HTTP 热重载端口，默认 9999
   --verify            验证proto定义
   --decode            解码PB数据 (运行 --decode 无参数查看详细帮助)
 
@@ -77,6 +95,8 @@ function parseArgs(args) {
   const options = {
     code: "",
     qrLogin: false,
+    mockMode: false,
+    reloadPort: 9999,
     deleteAccountMode: false,
     name: "",
     certId: "",
@@ -89,6 +109,9 @@ function parseArgs(args) {
     }
     if (args[i] === "--qr") {
       options.qrLogin = true;
+    }
+    if (args[i] === "--mock") {
+      options.mockMode = true;
     }
     if (args[i] === "--wx") {
       CONFIG.platform = "wx";
@@ -104,14 +127,100 @@ function parseArgs(args) {
       const sec = parseInt(args[++i]);
       CONFIG.friendCheckInterval = Math.max(sec, 1) * 1000; // 最低1秒
     }
+    if (args[i] === "--reload-port" && args[i + 1]) {
+      const port = parseInt(args[++i], 10);
+      if (Number.isInteger(port) && port > 0 && port < 65536) {
+        options.reloadPort = port;
+      }
+    }
   }
   return options;
+}
+
+function createMockConnectionRuntime() {
+  const networkEvents = new EventEmitter();
+  const userState = {
+    gid: 95270001,
+    name: "mock-user",
+    level: 1,
+    gold: 0,
+    exp: 0,
+  };
+
+  return {
+    networkEvents,
+    getUserState() {
+      return userState;
+    },
+    sendMsgAsync(serviceName, methodName) {
+      return Promise.reject(
+        new Error(`[mock] request blocked: ${serviceName}.${methodName}`),
+      );
+    },
+  };
+}
+
+async function startMockMode(options) {
+  console.log(
+    `[mock] starting local runtime, reload endpoint http://127.0.0.1:${options.reloadPort}/reload`,
+  );
+
+  runtimeManager = new RuntimeManager(createMockConnectionRuntime());
+  await runtimeManager.loadModules(["mockReloadModule"]);
+
+  uninstallReloadSignal = installReloadSignal(runtimeManager, {
+    signalName: CONFIG.reloadSignal,
+    exitOnFailure: false,
+    httpPort: options.reloadPort,
+    getRuntimeState: () => ({
+      loggedIn: false,
+      gid: 95270001,
+      name: "mock-user",
+      platform: "mock",
+    }),
+  });
+
+  console.log(
+    "[mock] ready, edit src/mockReloadModule.js and POST /reload to verify hot reload",
+  );
+
+  const shutdownMock = async (signalName) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n[mock] received ${signalName}, shutting down...`);
+
+    if (uninstallReloadSignal) {
+      uninstallReloadSignal();
+      uninstallReloadSignal = null;
+    }
+
+    if (runtimeManager) {
+      await runtimeManager.unloadAllModules();
+      runtimeManager = null;
+    }
+
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => {
+    shutdownMock("SIGINT");
+  });
+
+  process.on("SIGTERM", () => {
+    shutdownMock("SIGTERM");
+  });
 }
 
 // ============ 主函数 ============
 async function main() {
   const args = process.argv.slice(2);
   let usedQrLogin = false;
+  const options = parseArgs(args);
+
+  if (options.mockMode) {
+    await startMockMode(options);
+    return;
+  }
 
   // 加载 proto 定义
   await loadProto();
@@ -129,8 +238,6 @@ async function main() {
   }
 
   // 正常挂机模式
-  const options = parseArgs(args);
-
   // QQ 平台支持扫码登录: 显式 --qr，或未传 --code 时自动触发
   if (
     !options.code &&
@@ -176,29 +283,65 @@ async function main() {
     // 处理邀请码 (仅微信环境)
     await processInviteCodes();
 
-    startFarmCheckLoop();
-    startFriendCheckLoop();
-    initTaskSystem();
+    const connectionRuntime = getConnectionRuntime();
+    runtimeManager = new RuntimeManager(connectionRuntime);
+
+    await runtimeManager.loadModules([
+      "farm",
+      "friend",
+      "task",
+      "warehouse",
+      "couponShop",
+    ]);
+
+    uninstallReloadSignal = installReloadSignal(runtimeManager, {
+      signalName: CONFIG.reloadSignal,
+      exitOnFailure: true,
+      httpPort: options.reloadPort,
+      getRuntimeState: getReloadRuntimeState,
+    });
+
+    const runtimeState = getReloadRuntimeState();
+    console.log(
+      `[reload] installed for pid=${process.pid} gid=${runtimeState.gid} modules=${runtimeManager.getLoadedModules().join(",")}`,
+    );
 
     // 启动时立即检查一次背包
     setTimeout(() => debugSellFruits(), 5000);
-    startSellLoop(60000); // 每分钟自动出售仓库果实
-    startCouponShopLoop(CONFIG.couponBuyInterval);
   });
 
-  // 退出处理
-  process.on("SIGINT", () => {
+  async function shutdown(signalName) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
     cleanupStatusBar();
-    console.log("\n[退出] 正在断开...");
-    stopFarmCheckLoop();
-    stopFriendCheckLoop();
-    cleanupTaskSystem();
-    stopSellLoop();
-    stopCouponShopLoop();
+    console.log(`\n[退出] 收到 ${signalName}，正在断开...`);
+
+    if (uninstallReloadSignal) {
+      uninstallReloadSignal();
+      uninstallReloadSignal = null;
+    }
+
+    if (runtimeManager) {
+      try {
+        await runtimeManager.unloadAllModules();
+      } catch (e) {
+        console.error("[退出] 卸载业务模块失败:", e.message);
+      }
+    }
+
     cleanup();
     const ws = getWs();
     if (ws) ws.close();
     process.exit(0);
+  }
+
+  process.on("SIGINT", () => {
+    shutdown("SIGINT");
+  });
+
+  process.on("SIGTERM", () => {
+    shutdown("SIGTERM");
   });
 }
 

@@ -5,7 +5,7 @@
 const protobuf = require("protobufjs");
 const { CONFIG, PlantPhase, PHASE_NAMES } = require("./config");
 const { types } = require("./proto");
-const { sendMsgAsync, getUserState, networkEvents } = require("./network");
+const network = require("./network");
 const {
   toLong,
   toNum,
@@ -29,6 +29,28 @@ let isCheckingFarm = false;
 let isFirstFarmCheck = true;
 let farmCheckTimer = null;
 let farmLoopRunning = false;
+let activeContext = null;
+
+function sendMsgAsync(serviceName, methodName, bodyBytes, timeout) {
+  if (activeContext) {
+    return activeContext.request(serviceName, methodName, bodyBytes, timeout);
+  }
+  return network.sendMsgAsync(serviceName, methodName, bodyBytes, timeout);
+}
+
+function getUserState() {
+  if (activeContext) {
+    return activeContext.state;
+  }
+  return network.getUserState();
+}
+
+function scheduleFarmTimeout(name, fn, delayMs) {
+  if (activeContext) {
+    return activeContext.scheduleTimeout(name, fn, delayMs);
+  }
+  return setTimeout(fn, delayMs);
+}
 
 // ============ 农场 API ============
 
@@ -629,7 +651,11 @@ function findBestSeedPlan(
     return { plan: [], plannedLands: 0, score: 0, cost: 0 };
   }
 
-  const strategyMap = buildSeedStrategyMap(level, landsCount, hasOrganicFertilizer);
+  const strategyMap = buildSeedStrategyMap(
+    level,
+    landsCount,
+    hasOrganicFertilizer,
+  );
   let options = availableSeeds
     .map((seed) => {
       const limitCount = toNum(seed.goods.limit_count);
@@ -1333,10 +1359,18 @@ function startFarmCheckLoop() {
   farmLoopRunning = true;
 
   // 监听服务器推送的土地变化事件
-  networkEvents.on("landsChanged", onLandsChangedPush);
+  if (activeContext) {
+    activeContext.on("landsChanged", onLandsChangedPush);
+  } else {
+    network.networkEvents.on("landsChanged", onLandsChangedPush);
+  }
 
   // 延迟 2 秒后启动循环
-  farmCheckTimer = setTimeout(() => farmCheckLoop(), 2000);
+  farmCheckTimer = scheduleFarmTimeout(
+    "farm-loop-start",
+    () => farmCheckLoop(),
+    2000,
+  );
 }
 
 /**
@@ -1351,26 +1385,42 @@ function onLandsChangedPush(lands) {
   lastPushTime = now;
   log("农场", `收到推送: ${lands.length}块土地变化，检查中...`);
 
-  setTimeout(async () => {
-    if (!isCheckingFarm) {
-      await checkFarm();
-    }
-  }, 100);
+  scheduleFarmTimeout(
+    "farm-push-check",
+    async () => {
+      if (!isCheckingFarm) {
+        await checkFarm();
+      }
+    },
+    100,
+  );
 }
 
 function stopFarmCheckLoop() {
   farmLoopRunning = false;
-  if (farmCheckTimer) {
+  if (!activeContext && farmCheckTimer) {
     clearTimeout(farmCheckTimer);
-    farmCheckTimer = null;
   }
-  networkEvents.removeListener("landsChanged", onLandsChangedPush);
+  farmCheckTimer = null;
+  if (!activeContext) {
+    network.networkEvents.removeListener("landsChanged", onLandsChangedPush);
+  }
+}
+
+async function init(context) {
+  activeContext = context;
+  startFarmCheckLoop();
+}
+
+async function cleanup() {
+  stopFarmCheckLoop();
+  activeContext = null;
 }
 
 module.exports = {
   checkFarm,
-  startFarmCheckLoop,
-  stopFarmCheckLoop,
   getCurrentPhase,
   setOperationLimitsCallback,
+  init,
+  cleanup,
 };

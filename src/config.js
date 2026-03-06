@@ -15,6 +15,7 @@ const CONFIG = {
   taskBaseRewardOnly: true, // 任务只领基础奖励（不走分享翻倍）
   autoBuyOrganicFertilizerWithCoupon: false, // 自动用点券购买有机化肥容器
   couponBuyInterval: 60000, // 点券商店检查间隔（毫秒）
+  reloadSignal: "SIGUSR2", // 热更新触发信号（服务器建议 SIGUSR2）
   preferredFertilizerId: 1012, // 优先使用的化肥ID（1012=有机化肥，速度更快）
   autoBuyFertilizerWhenEmpty: false, // 化肥不足时自动购买（金币不足则跳过）
   enableFiveMinuteMatureStrategy: true, // 按“普通肥+多次有机肥”将作物成熟控制在目标时间内

@@ -4,9 +4,30 @@
 
 const { types } = require("./proto");
 const { CONFIG } = require("./config");
-const { sendMsgAsync, networkEvents } = require("./network");
+const network = require("./network");
 const { toLong, toNum, log, logWarn, sleep } = require("./utils");
 const { getItemName } = require("./gameConfig");
+
+let startupTimerIds = [];
+let activeContext = null;
+
+function request(serviceName, methodName, bodyBytes, timeout) {
+  if (activeContext) {
+    return activeContext.request(serviceName, methodName, bodyBytes, timeout);
+  }
+  return network.sendMsgAsync(serviceName, methodName, bodyBytes, timeout);
+}
+
+function scheduleStartupTask(fn, delayMs) {
+  if (activeContext) {
+    return activeContext.scheduleTimeout("task-startup", fn, delayMs);
+  }
+  const timerId = setTimeout(async () => {
+    startupTimerIds = startupTimerIds.filter((id) => id !== timerId);
+    await fn();
+  }, delayMs);
+  startupTimerIds.push(timerId);
+}
 
 // ============ 任务 API ============
 
@@ -14,7 +35,7 @@ async function getTaskInfo() {
   const body = types.TaskInfoRequest.encode(
     types.TaskInfoRequest.create({}),
   ).finish();
-  const { body: replyBody } = await sendMsgAsync(
+  const { body: replyBody } = await request(
     "gamepb.taskpb.TaskService",
     "TaskInfo",
     body,
@@ -29,7 +50,7 @@ async function claimTaskReward(taskId, doShared = false) {
       do_shared: doShared,
     }),
   ).finish();
-  const { body: replyBody } = await sendMsgAsync(
+  const { body: replyBody } = await request(
     "gamepb.taskpb.TaskService",
     "ClaimTaskReward",
     body,
@@ -44,7 +65,7 @@ async function batchClaimTaskReward(taskIds, doShared = false) {
       do_shared: doShared,
     }),
   ).finish();
-  const { body: replyBody } = await sendMsgAsync(
+  const { body: replyBody } = await request(
     "gamepb.taskpb.TaskService",
     "BatchClaimTaskReward",
     body,
@@ -233,7 +254,7 @@ function onTaskInfoNotify(taskInfo) {
 
   // 有可领取任务，延迟后自动领取
   log("任务", `有 ${claimable.length} 个任务可领取，准备自动领取...`);
-  setTimeout(() => claimTasksFromList(claimable), 1000);
+  scheduleStartupTask(() => claimTasksFromList(claimable), 1000);
 }
 
 /**
@@ -250,22 +271,42 @@ async function claimTasksFromList(claimable) {
 
 function initTaskSystem() {
   // 监听任务状态变化推送
-  networkEvents.on("taskInfoNotify", onTaskInfoNotify);
+  if (activeContext) {
+    activeContext.on("taskInfoNotify", onTaskInfoNotify);
+  } else {
+    network.networkEvents.on("taskInfoNotify", onTaskInfoNotify);
+  }
 
   // 启动时打印一次当前任务列表
-  setTimeout(() => printCurrentTaskList(), 2500);
+  scheduleStartupTask(() => printCurrentTaskList(), 2500);
 
   // 启动时检查一次任务
-  setTimeout(() => checkAndClaimTasks(), 4000);
+  scheduleStartupTask(() => checkAndClaimTasks(), 4000);
 }
 
 function cleanupTaskSystem() {
-  networkEvents.off("taskInfoNotify", onTaskInfoNotify);
+  if (!activeContext) {
+    network.networkEvents.off("taskInfoNotify", onTaskInfoNotify);
+  }
+  for (const timerId of startupTimerIds) {
+    clearTimeout(timerId);
+  }
+  startupTimerIds = [];
+}
+
+async function init(context) {
+  activeContext = context;
+  initTaskSystem();
+}
+
+async function cleanup() {
+  cleanupTaskSystem();
+  activeContext = null;
 }
 
 module.exports = {
   checkAndClaimTasks,
   printCurrentTaskList,
-  initTaskSystem,
-  cleanupTaskSystem,
+  init,
+  cleanup,
 };

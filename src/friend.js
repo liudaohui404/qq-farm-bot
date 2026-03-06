@@ -4,7 +4,7 @@
 
 const { CONFIG, PlantPhase, PHASE_NAMES } = require("./config");
 const { types } = require("./proto");
-const { sendMsgAsync, getUserState, networkEvents } = require("./network");
+const network = require("./network");
 const {
   toLong,
   toNum,
@@ -20,8 +20,31 @@ const { getPlantName } = require("./gameConfig");
 let isCheckingFriends = false;
 let isFirstFriendCheck = true;
 let friendCheckTimer = null;
+let applicationCheckTimer = null;
 let friendLoopRunning = false;
 let lastResetDate = ""; // 上次重置日期 (YYYY-MM-DD)
+let activeContext = null;
+
+function sendMsgAsync(serviceName, methodName, bodyBytes, timeout) {
+  if (activeContext) {
+    return activeContext.request(serviceName, methodName, bodyBytes, timeout);
+  }
+  return network.sendMsgAsync(serviceName, methodName, bodyBytes, timeout);
+}
+
+function getUserState() {
+  if (activeContext) {
+    return activeContext.state;
+  }
+  return network.getUserState();
+}
+
+function scheduleFriendTimeout(name, fn, delayMs) {
+  if (activeContext) {
+    return activeContext.scheduleTimeout(name, fn, delayMs);
+  }
+  return setTimeout(fn, delayMs);
+}
 
 // 经验追踪：记录帮助前的 dayExpTimes，操作后对比是否增长
 const expTracker = new Map(); // opId -> 帮助前的 dayExpTimes
@@ -825,22 +848,50 @@ function startFriendCheckLoop() {
   setOperationLimitsCallback(updateOperationLimits);
 
   // 监听好友申请推送 (微信同玩)
-  networkEvents.on("friendApplicationReceived", onFriendApplicationReceived);
+  if (activeContext) {
+    activeContext.on("friendApplicationReceived", onFriendApplicationReceived);
+  } else {
+    network.networkEvents.on(
+      "friendApplicationReceived",
+      onFriendApplicationReceived,
+    );
+  }
 
   // 延迟 5 秒后启动循环，等待登录和首次农场检查完成
-  friendCheckTimer = setTimeout(() => friendCheckLoop(), 5000);
+  friendCheckTimer = scheduleFriendTimeout(
+    "friend-loop-start",
+    () => friendCheckLoop(),
+    5000,
+  );
 
   // 启动时检查一次待处理的好友申请
-  setTimeout(() => checkAndAcceptApplications(), 3000);
+  applicationCheckTimer = scheduleFriendTimeout(
+    "friend-application-start",
+    () => {
+      applicationCheckTimer = null;
+      checkAndAcceptApplications();
+    },
+    3000,
+  );
 }
 
 function stopFriendCheckLoop() {
   friendLoopRunning = false;
-  networkEvents.off("friendApplicationReceived", onFriendApplicationReceived);
-  if (friendCheckTimer) {
-    clearTimeout(friendCheckTimer);
-    friendCheckTimer = null;
+  setOperationLimitsCallback(null);
+  if (!activeContext) {
+    network.networkEvents.off(
+      "friendApplicationReceived",
+      onFriendApplicationReceived,
+    );
   }
+  if (!activeContext && friendCheckTimer) {
+    clearTimeout(friendCheckTimer);
+  }
+  if (!activeContext && applicationCheckTimer) {
+    clearTimeout(applicationCheckTimer);
+  }
+  friendCheckTimer = null;
+  applicationCheckTimer = null;
 }
 
 // ============ 自动同意好友申请 (微信同玩) ============
@@ -899,9 +950,20 @@ async function acceptFriendsWithRetry(gids) {
   }
 }
 
+async function init(context) {
+  activeContext = context;
+  startFriendCheckLoop();
+}
+
+async function cleanup() {
+  stopFriendCheckLoop();
+  activeContext = null;
+}
+
 module.exports = {
   checkFriends,
-  startFriendCheckLoop,
-  stopFriendCheckLoop,
   checkAndAcceptApplications,
+  updateOperationLimits,
+  init,
+  cleanup,
 };
